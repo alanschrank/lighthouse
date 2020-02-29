@@ -1,64 +1,92 @@
-﻿// Copyright 2014-2015 Aaron Stannard, Petabridge LLC
-//  
-// Licensed under the Apache License, Version 2.0 (the "License"); you may not use 
-// this file except in compliance with the License. You may obtain a copy of the 
-// License at 
-// 
-//     http://www.apache.org/licenses/LICENSE-2.0 
-// 
-// Unless required by applicable law or agreed to in writing, software distributed 
-// under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR 
-// CONDITIONS OF ANY KIND, either express or implied. See the License for the 
-// specific language governing permissions and limitations under the License.
-using System.Configuration;
+﻿// -----------------------------------------------------------------------
+// <copyright file="LighthouseHostFactory.cs" company="Petabridge, LLC">
+//      Copyright (C) 2015 - 2019 Petabridge, LLC <https://petabridge.com>
+// </copyright>
+// -----------------------------------------------------------------------
+
+using System;
+using System.IO;
 using System.Linq;
 using Akka.Actor;
+using Akka.Bootstrap.Docker;
 using Akka.Configuration;
-using Akka.Configuration.Hocon;
-using ConfigurationException = Akka.Configuration.ConfigurationException;
+using static System.String;
 
 namespace Lighthouse
 {
     /// <summary>
-    /// Launcher for the Lighthouse <see cref="ActorSystem"/>
+    ///     Launcher for the Lighthouse <see cref="ActorSystem" />
     /// </summary>
     public static class LighthouseHostFactory
     {
-        public static ActorSystem LaunchLighthouse(string ipAddress = null, int? specifiedPort = null)
+        public static ActorSystem LaunchLighthouse(string ipAddress = null, int? specifiedPort = null,
+            string systemName = null)
         {
-            var systemName = "lighthouse";
-            var section = (AkkaConfigurationSection)ConfigurationManager.GetSection("akka");
-            var clusterConfig = section.AkkaConfig;
+            systemName = systemName ?? Environment.GetEnvironmentVariable("ACTORSYSTEM")?.Trim();
+
+
+            // Set environment variables for use inside Akka.Bootstrap.Docker
+            // If overrides were provided to this method.
+            //if (!string.IsNullOrEmpty(ipAddress)) Environment.SetEnvironmentVariable("CLUSTER_IP", ipAddress);
+
+            //if (specifiedPort != null)
+            //    Environment.SetEnvironmentVariable("CLUSTER_PORT", specifiedPort.Value.ToString());
+
+            var useDocker = !(IsNullOrEmpty(Environment.GetEnvironmentVariable("CLUSTER_IP")?.Trim()) ||
+                             IsNullOrEmpty(Environment.GetEnvironmentVariable("CLUSTER_SEEDS")?.Trim()));
+
+            var clusterConfig = ConfigurationFactory.ParseString(File.ReadAllText("akka.hocon"));
+
+            // If none of the environment variables expected by Akka.Bootstrap.Docker are set, use only what's in HOCON
+            if (useDocker)
+                clusterConfig = clusterConfig.BootstrapFromDocker();
 
             var lighthouseConfig = clusterConfig.GetConfig("lighthouse");
-            if (lighthouseConfig != null)
-            {
+            if (lighthouseConfig != null && IsNullOrEmpty(systemName))
                 systemName = lighthouseConfig.GetString("actorsystem", systemName);
-            }
 
-            var remoteConfig = clusterConfig.GetConfig("akka.remote");
-            ipAddress = ipAddress ??
-                        remoteConfig.GetString("helios.tcp.public-hostname") ??
-                        "127.0.0.1"; //localhost as a final default
-            int port = specifiedPort ?? remoteConfig.GetInt("helios.tcp.port");
+            ipAddress = clusterConfig.GetString("akka.remote.dot-netty.tcp.public-hostname", "127.0.0.1");
+            var port = clusterConfig.GetInt("akka.remote.dot-netty.tcp.port");
 
-            if(port == 0) throw new ConfigurationException("Need to specify an explicit port for Lighthouse. Found an undefined port or a port value of 0 in App.config.");
+            var sslEnabled = clusterConfig.GetBoolean("akka.remote.dot-netty.tcp.enable-ssl");
+            var selfAddress = sslEnabled ? new Address("akka.ssl.tcp", systemName, ipAddress.Trim(), port).ToString()
+                    : new Address("akka.tcp", systemName, ipAddress.Trim(), port).ToString();
 
-            var selfAddress = string.Format("akka.tcp://{0}@{1}:{2}", systemName, ipAddress, port);
-            var seeds = clusterConfig.GetStringList("akka.cluster.seed-nodes");
+            /*
+             * Sanity check
+             */
+            Console.WriteLine($"[Lighthouse] ActorSystem: {systemName}; IP: {ipAddress}; PORT: {port}");
+            Console.WriteLine("[Lighthouse] Performing pre-boot sanity check. Should be able to parse address [{0}]",
+                selfAddress);
+            Console.WriteLine("[Lighthouse] Parse successful.");
+
+
+            var seeds = clusterConfig.GetStringList("akka.cluster.seed-nodes").ToList();
+
+            Config injectedClusterConfigString = null;
+
+
             if (!seeds.Contains(selfAddress))
             {
                 seeds.Add(selfAddress);
+
+                if (seeds.Count > 1)
+                {
+                    injectedClusterConfigString = seeds.Aggregate("akka.cluster.seed-nodes = [",
+                        (current, seed) => current + @"""" + seed + @""", ");
+                    injectedClusterConfigString += "]";
+                }
+                else
+                {
+                    injectedClusterConfigString = "akka.cluster.seed-nodes = [\"" + selfAddress + "\"]";
+                }
             }
 
-            var injectedClusterConfigString = seeds.Aggregate("akka.cluster.seed-nodes = [", (current, seed) => current + (@"""" + seed + @""", "));
-            injectedClusterConfigString += "]";
 
-            var finalConfig = ConfigurationFactory.ParseString(
-                string.Format(@"akka.remote.helios.tcp.public-hostname = {0} 
-akka.remote.helios.tcp.port = {1}", ipAddress, port))
-                .WithFallback(ConfigurationFactory.ParseString(injectedClusterConfigString))
-                .WithFallback(clusterConfig);
+            var finalConfig = injectedClusterConfigString != null
+                ? injectedClusterConfigString
+                    .WithFallback(clusterConfig)
+                : clusterConfig;
 
             return ActorSystem.Create(systemName, finalConfig);
         }
