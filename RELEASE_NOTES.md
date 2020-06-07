@@ -1,4 +1,3 @@
-#### 1.3.0 November 22 2019 ####
-* [Enable SSL needs management](https://github.com/petabridge/lighthouse/issues/102)
-* Updated all underlying dependencies.
-* Updated Windows Server base Docker image.
+#### 1.3.3 May 28 2020 ####
+* Updated to use Akka.NET v1.4.7.
+* Resolved [issue with Lighthouse v1.3.2 where `pbm` did not work when executed via interactive shell](https://github.com/petabridge/lighthouse/issues/151)
