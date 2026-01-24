@@ -1,3 +1,5 @@
-#### 1.3.3 May 28 2020 ####
-* Updated to use Akka.NET v1.4.7.
-* Resolved [issue with Lighthouse v1.3.2 where `pbm` did not work when executed via interactive shell](https://github.com/petabridge/lighthouse/issues/151)
+#### 1.7.2 December 20 2022 ####
+
+* [Bumped Akka.NET version to 1.4.47](https://github.com/akkadotnet/akka.net/releases/tag/1.4.47)
+* [Added Serilog logging, configurable by `/app/serilog.json`](https://github.com/petabridge/lighthouse/pull/304)
+* [Upgraded to Petabridge.Cmd 1.2.1](https://cmd.petabridge.com/articles/RELEASE_NOTES.html) and used Akka.Hosting support.

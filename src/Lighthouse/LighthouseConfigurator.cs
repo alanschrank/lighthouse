@@ -1,5 +1,5 @@
 ﻿// -----------------------------------------------------------------------
-// <copyright file="LighthouseHostFactory.cs" company="Petabridge, LLC">
+// <copyright file="LighthouseConfigurator.cs" company="Petabridge, LLC">
 //      Copyright (C) 2015 - 2019 Petabridge, LLC <https://petabridge.com>
 // </copyright>
 // -----------------------------------------------------------------------
@@ -10,27 +10,26 @@ using System.Linq;
 using Akka.Actor;
 using Akka.Bootstrap.Docker;
 using Akka.Configuration;
+using Serilog;
 using static System.String;
 
 namespace Lighthouse
 {
     /// <summary>
-    ///     Launcher for the Lighthouse <see cref="ActorSystem" />
+    ///     Configurator for Lighthouse
     /// </summary>
-    public static class LighthouseHostFactory
+    public static class LighthouseConfigurator
     {
-        public static ActorSystem LaunchLighthouse(string ipAddress = null, int? specifiedPort = null,
+        public static (Config config, string actorSystemName) LaunchLighthouse(string ipAddress = null, int? specifiedPort = null,
             string systemName = null)
         {
             systemName = systemName ?? Environment.GetEnvironmentVariable("ACTORSYSTEM")?.Trim();
 
-
-            // Set environment variables for use inside Akka.Bootstrap.Docker
-            // If overrides were provided to this method.
-            //if (!string.IsNullOrEmpty(ipAddress)) Environment.SetEnvironmentVariable("CLUSTER_IP", ipAddress);
-
-            //if (specifiedPort != null)
-            //    Environment.SetEnvironmentVariable("CLUSTER_PORT", specifiedPort.Value.ToString());
+            var argConfig = "";
+            if (ipAddress != null)
+                argConfig += $"akka.remote.dot-netty.tcp.public-hostname = {ipAddress}\n";
+            if (specifiedPort != null)
+                argConfig += $"akka.remote.dot-netty.tcp.port = {specifiedPort}";
 
             var useDocker = !(IsNullOrEmpty(Environment.GetEnvironmentVariable("CLUSTER_IP")?.Trim()) ||
                              IsNullOrEmpty(Environment.GetEnvironmentVariable("CLUSTER_SEEDS")?.Trim()));
@@ -41,6 +40,11 @@ namespace Lighthouse
             if (useDocker)
                 clusterConfig = clusterConfig.BootstrapFromDocker();
 
+            // Values from method arguments should always win
+            if (!IsNullOrEmpty(argConfig))
+                clusterConfig = ConfigurationFactory.ParseString(argConfig)
+                    .WithFallback(clusterConfig);
+            
             var lighthouseConfig = clusterConfig.GetConfig("lighthouse");
             if (lighthouseConfig != null && IsNullOrEmpty(systemName))
                 systemName = lighthouseConfig.GetString("actorsystem", systemName);
@@ -55,10 +59,10 @@ namespace Lighthouse
             /*
              * Sanity check
              */
-            Console.WriteLine($"[Lighthouse] ActorSystem: {systemName}; IP: {ipAddress}; PORT: {port}");
-            Console.WriteLine("[Lighthouse] Performing pre-boot sanity check. Should be able to parse address [{0}]",
+            Log.Logger.Information($"[Lighthouse] ActorSystem: {systemName}; IP: {ipAddress}; PORT: {port}");
+            Log.Logger.Information("[Lighthouse] Performing pre-boot sanity check. Should be able to parse address [{0}]",
                 selfAddress);
-            Console.WriteLine("[Lighthouse] Parse successful.");
+            Log.Logger.Information("[Lighthouse] Parse successful.");
 
 
             var seeds = clusterConfig.GetStringList("akka.cluster.seed-nodes").ToList();
@@ -88,7 +92,7 @@ namespace Lighthouse
                     .WithFallback(clusterConfig)
                 : clusterConfig;
 
-            return ActorSystem.Create(systemName, finalConfig);
+            return (finalConfig, systemName);
         }
     }
 }
